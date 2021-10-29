@@ -470,7 +470,7 @@ class Generator {
 
     for (int i = 0; i < cols.length; ++i) {
       int colInd =
-          cols.sublist(0, i).fold(0, (int sum, col) => sum + col.width);
+      cols.sublist(0, i).fold(0, (int sum, col) => sum + col.width);
       double charWidth = _getCharWidth(cols[i].styles);
       double fromPos = _colIndToPosition(colInd);
       final double toPos =
@@ -478,28 +478,51 @@ class Generator {
       int maxCharactersNb = ((toPos - fromPos) / charWidth).floor();
 
       if (!cols[i].containsChinese) {
-        // CASE 1: containsChinese = false
-        Uint8List encodedToPrint = cols[i].textEncoded != null
-            ? cols[i].textEncoded!
-            : _encode(cols[i].text);
 
-        // If the col's content is too long, split it to the next row
-        int realCharactersNb = encodedToPrint.length;
-        if (realCharactersNb > maxCharactersNb) {
-          // Print max possible and split to the next row
-          Uint8List encodedToPrintNextRow =
-              encodedToPrint.sublist(maxCharactersNb);
-          encodedToPrint = encodedToPrint.sublist(0, maxCharactersNb);
-          isNextRow = true;
-          nextRow.add(PosColumn(
-              textEncoded: encodedToPrintNextRow,
-              width: cols[i].width,
-              styles: cols[i].styles));
-        } else {
-          // Insert an empty col
-          nextRow.add(PosColumn(
-              text: '', width: cols[i].width, styles: cols[i].styles));
+        List<String> stringPart = cols[i].text.split(' ');
+
+        String printNow = '';
+        String printNext = '';
+        int counter = 0;
+        int index = 1;
+
+        // Check if next word is overflow maxLength
+        int max = maxCharactersNb;
+        for (var e in stringPart) {
+          if (index != stringPart.length) {
+            e += ' ';
+          }
+          final int stringLength = e.length;
+          if (counter + stringLength <= max) {
+            printNow += e;
+          } else {
+            isNextRow = true;
+            printNext += e;
+          }
+          index += 1;
+          counter += stringLength;
         }
+
+        Uint8List encodedToPrint = _encode(printNow);
+
+        if (isNextRow) {
+          nextRow.add(
+            PosColumn(
+              text: printNext,
+              width: cols[i].width,
+              styles: cols[i].styles,
+            ),
+          );
+        } else {
+          nextRow.add(
+            PosColumn(
+              text: '',
+              width: cols[i].width,
+              styles: cols[i].styles,
+            ),
+          );
+        }
+
         // end rows splitting
         bytes += _text(
           encodedToPrint,
@@ -559,7 +582,7 @@ class Generator {
     bytes += emptyLines(1);
 
     if (isNextRow) {
-      row(nextRow);
+      bytes += row(nextRow);
     }
     return bytes;
   }
