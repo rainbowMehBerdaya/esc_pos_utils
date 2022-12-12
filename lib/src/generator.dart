@@ -478,28 +478,61 @@ class Generator {
       int maxCharactersNb = ((toPos - fromPos) / charWidth).floor();
 
       if (!cols[i].containsChinese) {
-        // CASE 1: containsChinese = false
-        Uint8List encodedToPrint = cols[i].textEncoded != null
-            ? cols[i].textEncoded!
-            : _encode(cols[i].text);
 
-        // If the col's content is too long, split it to the next row
-        int realCharactersNb = encodedToPrint.length;
-        if (realCharactersNb > maxCharactersNb) {
-          // Print max possible and split to the next row
-          Uint8List encodedToPrintNextRow =
-              encodedToPrint.sublist(maxCharactersNb);
-          encodedToPrint = encodedToPrint.sublist(0, maxCharactersNb);
-          isNextRow = true;
-          nextRow.add(PosColumn(
-              textEncoded: encodedToPrintNextRow,
-              width: cols[i].width,
-              styles: cols[i].styles));
-        } else {
-          // Insert an empty col
-          nextRow.add(PosColumn(
-              text: '', width: cols[i].width, styles: cols[i].styles));
+        List<String> stringPart = cols[i].text.split(' ');
+
+        String printNow = '';
+        String printNext = '';
+        int counter = 0;
+        int index = 1;
+        String lastWordFromStringPart = '';
+
+        // Check if next word is overflow maxLength
+        // ex abcdefghi jklmn in 12 long space
+        // so it will split abcdefghi and jklmn in the next line
+        for (var e in stringPart) {
+          if (index != stringPart.length) {
+            e += ' ';
+          }
+          final int stringLength = e.length;
+          if (counter + stringLength <= maxCharactersNb) {
+            printNow += e;
+          } else {
+            isNextRow = true;
+            printNext += e;
+          }
+          index += 1;
+          counter += stringLength;
+          lastWordFromStringPart = e;
         }
+
+        // Check if PrintNext word never cant be print without breaking the words
+        // ex abcdefghijklmnopqrstuvwxyz in 16 long space, which is will cannot be split
+        if (printNow == '' && printNext != '') {
+          printNow = printNext.substring(0, maxCharactersNb);
+          printNext = printNext.substring(maxCharactersNb);
+        }
+
+        Uint8List encodedToPrint = _encode(printNow);
+
+        if (isNextRow) {
+          nextRow.add(
+            PosColumn(
+              text: printNext,
+              width: cols[i].width,
+              styles: cols[i].styles,
+            ),
+          );
+        } else {
+          nextRow.add(
+            PosColumn(
+              text: '',
+              width: cols[i].width,
+              styles: cols[i].styles,
+            ),
+          );
+        }
+
         // end rows splitting
         bytes += _text(
           encodedToPrint,
@@ -559,7 +592,7 @@ class Generator {
     bytes += emptyLines(1);
 
     if (isNextRow) {
-      row(nextRow);
+      bytes += row(nextRow);
     }
     return bytes;
   }
