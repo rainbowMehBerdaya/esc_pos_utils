@@ -12,7 +12,6 @@ import 'package:hex/hex.dart';
 import 'package:image/image.dart';
 import 'package:gbk_codec/gbk_codec.dart';
 import 'package:esc_pos_utils/esc_pos_utils.dart';
-import 'enums.dart';
 import 'commands.dart';
 
 class Generator {
@@ -35,13 +34,22 @@ class Generator {
   int _getMaxCharsPerLine(PosFontType? font) {
     if (_paperSize == PaperSize.mm58) {
       return (font == null || font == PosFontType.fontA) ? 32 : 42;
-    } else {
+    }
+
+    if (_paperSize == PaperSize.mm76) {
+      return (font == null || font == PosFontType.fontA) ? 35 : 40;
+    }
+
+    if (_paperSize == PaperSize.mm80) {
       return (font == null || font == PosFontType.fontA) ? 48 : 64;
     }
+
+    throw Exception('Paper size not registered');
   }
 
   // charWidth = default width * text size multiplier
   double _getCharWidth(PosStyles styles, {int? maxCharsPerLine}) {
+    // CHARACTER PER LINE BASED ON PAPER WIDTH [lib/src/generator.dart:35]
     int charsPerLine = _getCharsPerLine(styles, maxCharsPerLine);
     double charWidth = (_paperSize.width / charsPerLine) * styles.width.value;
     return charWidth;
@@ -157,7 +165,7 @@ class Generator {
     // final bytes = imgRgba8.getBytes();
 
     while (left < widthPx) {
-      final Image slice = copyCrop(biggerImage,  x:left, y:0, width:lineHeight, height: heightPx);
+      final Image slice = copyCrop(biggerImage, x: left, y: 0, width: lineHeight, height: heightPx);
       grayscale(slice);
       final imgBinary = slice.convert(numChannels: 1);
       final Uint8List bytes = imgBinary.getBytes();
@@ -465,119 +473,259 @@ class Generator {
     bool isNextRow = false;
     List<PosColumn> nextRow = <PosColumn>[];
 
-    for (int i = 0; i < cols.length; ++i) {
-      int colInd = cols.sublist(0, i).fold(0, (int sum, col) => sum + col.width);
-      double charWidth = _getCharWidth(cols[i].styles);
-      double fromPos = _colIndToPosition(colInd);
-      final double toPos = _colIndToPosition(colInd + cols[i].width) - spaceBetweenRows;
-      int maxCharactersNb = ((toPos - fromPos) / charWidth).floor();
+    if (_profile.name == 'TM-U220') {
+      String printNow = '';
+      for (int i = 0; i < cols.length; ++i) {
+        // GET COLUMN INDEX [1 - 12]
+        int colInd = cols.sublist(0, i).fold(0, (int sum, col) => sum + col.width);
 
-      if (!cols[i].containsChinese) {
-        List<String> stringPart = cols[i].text.split(' ');
+        double charWidth = _getCharWidth(cols[i].styles);
+        double fromPos = _colIndToPosition(colInd);
 
-        String printNow = '';
-        String printNext = '';
-        int counter = 0;
-        int index = 1;
-        String lastWordFromStringPart = '';
+        final double toPos = _colIndToPosition(colInd + cols[i].width);
 
-        // Check if next word is overflow maxLength
-        // ex abcdefghi jklmn in 12 long space
-        // so it will split abcdefghi and jklmn in the next line
-        for (var e in stringPart) {
-          if (index != stringPart.length) {
-            e += ' ';
+        int maxCharactersNb = ((toPos - fromPos) / charWidth).floor();
+
+        if (!cols[i].containsChinese) {
+          List<String> stringPart = cols[i].text.split(' ');
+
+          String printNowThisColumn = '';
+          String printNext = '';
+          int counter = 0;
+          int index = 1;
+          String lastWordFromStringPart = '';
+
+          // Check if next word is overflow maxLength
+          // ex abcdefghi jklmn in 12 long space
+          // so it will split abcdefghi and jklmn in the next line
+          for (var e in stringPart) {
+            if (index != stringPart.length) {
+              e += ' ';
+            }
+            final int stringLength = e.length;
+            if (counter + stringLength <= maxCharactersNb) {
+              printNowThisColumn += e;
+            } else {
+              isNextRow = true;
+              printNext += e;
+            }
+            index += 1;
+            counter += stringLength;
+            lastWordFromStringPart = e;
           }
-          final int stringLength = e.length;
-          if (counter + stringLength <= maxCharactersNb) {
-            printNow += e;
+
+          // Check if PrintNext word never cant be print without breaking the words
+          // ex abcdefghijklmnopqrstuvwxyz in 16 long space, which is will cannot be split
+          if (printNowThisColumn == '' && printNext != '') {
+            printNowThisColumn = printNext.substring(0, maxCharactersNb);
+            printNext = printNext.substring(maxCharactersNb);
+          }
+
+          if (printNowThisColumn.length < maxCharactersNb) {
+            final int printNowThisColumnLeftCharCount = maxCharactersNb - printNowThisColumn.length;
+
+            if (printNowThisColumnLeftCharCount != 0) {
+              if (cols[i].styles.align == PosAlign.right) {
+                printNowThisColumn = ' ' * printNowThisColumnLeftCharCount + printNowThisColumn;
+              } else {
+                printNowThisColumn += ' ' * printNowThisColumnLeftCharCount;
+              }
+            }
+          }
+
+          printNow += printNowThisColumn;
+
+          if (isNextRow) {
+            nextRow.add(
+              PosColumn(
+                text: printNext,
+                width: cols[i].width,
+                styles: cols[i].styles,
+              ),
+            );
           } else {
+            nextRow.add(
+              PosColumn(
+                text: '',
+                width: cols[i].width,
+                styles: cols[i].styles,
+              ),
+            );
+          }
+        } else {
+          // CASE 1: containsChinese = true
+          // Split text into multiple lines if it too long
+          int counter = 0;
+          int splitPos = 0;
+          for (int p = 0; p < cols[i].text.length; ++p) {
+            final int w = _isChinese(cols[i].text[p]) ? 2 : 1;
+            if (counter + w >= maxCharactersNb) {
+              break;
+            }
+            counter += w;
+            splitPos += 1;
+          }
+          String toPrintNextRow = cols[i].text.substring(splitPos);
+          String toPrint = cols[i].text.substring(0, splitPos);
+
+          if (toPrintNextRow.isNotEmpty) {
             isNextRow = true;
-            printNext += e;
+            nextRow.add(PosColumn(
+                text: toPrintNextRow,
+                containsChinese: true,
+                width: cols[i].width,
+                styles: cols[i].styles));
+          } else {
+            // Insert an empty col
+            nextRow.add(PosColumn(text: '', width: cols[i].width, styles: cols[i].styles));
           }
-          index += 1;
-          counter += stringLength;
-          lastWordFromStringPart = e;
-        }
 
-        // Check if PrintNext word never cant be print without breaking the words
-        // ex abcdefghijklmnopqrstuvwxyz in 16 long space, which is will cannot be split
-        if (printNow == '' && printNext != '') {
-          printNow = printNext.substring(0, maxCharactersNb);
-          printNext = printNext.substring(maxCharactersNb);
-        }
+          // Print current row
+          final list = _getLexemes(toPrint);
+          final List<String> lexemes = list[0];
+          final List<bool> isLexemeChinese = list[1];
 
-        Uint8List encodedToPrint = _encode(printNow);
-
-        if (isNextRow) {
-          nextRow.add(
-            PosColumn(
-              text: printNext,
-              width: cols[i].width,
+          // Print each lexeme using codetable OR kanji
+          for (var j = 0; j < lexemes.length; ++j) {
+            bytes += _text(
+              _encode(lexemes[j], isKanji: isLexemeChinese[j]),
               styles: cols[i].styles,
-            ),
-          );
-        } else {
-          nextRow.add(
-            PosColumn(
-              text: '',
-              width: cols[i].width,
-              styles: cols[i].styles,
-            ),
-          );
-        }
-
-        // end rows splitting
-        bytes += _text(
-          encodedToPrint,
-          styles: cols[i].styles,
-          colInd: colInd,
-          colWidth: cols[i].width,
-        );
-      } else {
-        // CASE 1: containsChinese = true
-        // Split text into multiple lines if it too long
-        int counter = 0;
-        int splitPos = 0;
-        for (int p = 0; p < cols[i].text.length; ++p) {
-          final int w = _isChinese(cols[i].text[p]) ? 2 : 1;
-          if (counter + w >= maxCharactersNb) {
-            break;
+              colInd: colInd,
+              colWidth: cols[i].width,
+              isKanji: isLexemeChinese[j],
+            );
+            // Define the absolute position only once (we print one line only)
+            // colInd = null;
           }
-          counter += w;
-          splitPos += 1;
         }
-        String toPrintNextRow = cols[i].text.substring(splitPos);
-        String toPrint = cols[i].text.substring(0, splitPos);
+      }
 
-        if (toPrintNextRow.isNotEmpty) {
-          isNextRow = true;
-          nextRow.add(PosColumn(
-              text: toPrintNextRow,
-              containsChinese: true,
-              width: cols[i].width,
-              styles: cols[i].styles));
-        } else {
-          // Insert an empty col
-          nextRow.add(PosColumn(text: '', width: cols[i].width, styles: cols[i].styles));
-        }
+      Uint8List encodedToPrint = _encode(printNow);
 
-        // Print current row
-        final list = _getLexemes(toPrint);
-        final List<String> lexemes = list[0];
-        final List<bool> isLexemeChinese = list[1];
+      // end rows splitting
+      bytes += _text(
+        encodedToPrint,
+        // styles: cols[i].styles,
+      );
+    } else {
+      for (int i = 0; i < cols.length; ++i) {
+        // GET COLUMN INDEX [1 - 12]
+        int colInd = cols.sublist(0, i).fold(0, (int sum, col) => sum + col.width);
 
-        // Print each lexeme using codetable OR kanji
-        for (var j = 0; j < lexemes.length; ++j) {
+        double charWidth = _getCharWidth(cols[i].styles);
+        double fromPos = _colIndToPosition(colInd);
+
+        final double toPos = _colIndToPosition(colInd + cols[i].width) - spaceBetweenRows;
+
+        int maxCharactersNb = ((toPos - fromPos) / charWidth).floor();
+
+        if (!cols[i].containsChinese) {
+          List<String> stringPart = cols[i].text.split(' ');
+
+          String printNow = '';
+          String printNext = '';
+          int counter = 0;
+          int index = 1;
+          String lastWordFromStringPart = '';
+
+          // Check if next word is overflow maxLength
+          // ex abcdefghi jklmn in 12 long space
+          // so it will split abcdefghi and jklmn in the next line
+          for (var e in stringPart) {
+            if (index != stringPart.length) {
+              e += ' ';
+            }
+            final int stringLength = e.length;
+            if (counter + stringLength <= maxCharactersNb) {
+              printNow += e;
+            } else {
+              isNextRow = true;
+              printNext += e;
+            }
+            index += 1;
+            counter += stringLength;
+            lastWordFromStringPart = e;
+          }
+
+          // Check if PrintNext word never cant be print without breaking the words
+          // ex abcdefghijklmnopqrstuvwxyz in 16 long space, which is will cannot be split
+          if (printNow == '' && printNext != '') {
+            printNow = printNext.substring(0, maxCharactersNb);
+            printNext = printNext.substring(maxCharactersNb);
+          }
+
+          Uint8List encodedToPrint = _encode(printNow);
+
+          if (isNextRow) {
+            nextRow.add(
+              PosColumn(
+                text: printNext,
+                width: cols[i].width,
+                styles: cols[i].styles,
+              ),
+            );
+          } else {
+            nextRow.add(
+              PosColumn(
+                text: '',
+                width: cols[i].width,
+                styles: cols[i].styles,
+              ),
+            );
+          }
+
+          // end rows splitting
           bytes += _text(
-            _encode(lexemes[j], isKanji: isLexemeChinese[j]),
+            encodedToPrint,
             styles: cols[i].styles,
             colInd: colInd,
             colWidth: cols[i].width,
-            isKanji: isLexemeChinese[j],
           );
-          // Define the absolute position only once (we print one line only)
-          // colInd = null;
+        } else {
+          // CASE 1: containsChinese = true
+          // Split text into multiple lines if it too long
+          int counter = 0;
+          int splitPos = 0;
+          for (int p = 0; p < cols[i].text.length; ++p) {
+            final int w = _isChinese(cols[i].text[p]) ? 2 : 1;
+            if (counter + w >= maxCharactersNb) {
+              break;
+            }
+            counter += w;
+            splitPos += 1;
+          }
+          String toPrintNextRow = cols[i].text.substring(splitPos);
+          String toPrint = cols[i].text.substring(0, splitPos);
+
+          if (toPrintNextRow.isNotEmpty) {
+            isNextRow = true;
+            nextRow.add(PosColumn(
+                text: toPrintNextRow,
+                containsChinese: true,
+                width: cols[i].width,
+                styles: cols[i].styles));
+          } else {
+            // Insert an empty col
+            nextRow.add(PosColumn(text: '', width: cols[i].width, styles: cols[i].styles));
+          }
+
+          // Print current row
+          final list = _getLexemes(toPrint);
+          final List<String> lexemes = list[0];
+          final List<bool> isLexemeChinese = list[1];
+
+          // Print each lexeme using codetable OR kanji
+          for (var j = 0; j < lexemes.length; ++j) {
+            bytes += _text(
+              _encode(lexemes[j], isKanji: isLexemeChinese[j]),
+              styles: cols[i].styles,
+              colInd: colInd,
+              colWidth: cols[i].width,
+              isKanji: isLexemeChinese[j],
+            );
+            // Define the absolute position only once (we print one line only)
+            // colInd = null;
+          }
         }
       }
     }
