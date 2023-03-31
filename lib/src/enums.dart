@@ -36,9 +36,24 @@ class PaperSize {
   const PaperSize._internal(this.value);
   final int value;
   static const mm58 = PaperSize._internal(1);
+  static const mm76 = PaperSize._internal(5); // ONLY DOT MATRIX
   static const mm80 = PaperSize._internal(2);
 
-  int get width => value == PaperSize.mm58.value ? 372 : 558;
+  int get width {
+    if (value == PaperSize.mm58.value) {
+      return 372;
+    }
+
+    if (value == PaperSize.mm76.value) {
+      return 200;
+    }
+
+    if (value == PaperSize.mm80.value) {
+      return 558;
+    }
+
+    throw Exception('Paper width not registered');
+  }
 }
 
 class PosBeepDuration {
