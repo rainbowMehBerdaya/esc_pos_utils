@@ -473,7 +473,7 @@ class Generator {
     bool isNextRow = false;
     List<PosColumn> nextRow = <PosColumn>[];
 
-    if (_profile.name == 'TM-U220') {
+    if (_profile.name == 'TM-U220' || _profile.name == 'DEVICE') {
       String printNow = '';
       for (int i = 0; i < cols.length; ++i) {
         // GET COLUMN INDEX [1 - 12]
